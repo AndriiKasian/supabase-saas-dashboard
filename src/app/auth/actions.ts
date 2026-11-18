@@ -12,7 +12,11 @@ export type AuthFormState = {
   email?: string;
 };
 
-const email = z.email("Enter a valid email address.").trim().toLowerCase();
+const email = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.email("Enter a valid email address."));
 
 const loginSchema = z.object({
   email,
