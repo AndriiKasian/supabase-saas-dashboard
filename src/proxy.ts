@@ -39,18 +39,35 @@ export async function proxy(request: NextRequest) {
   // refreshes an expiring session and triggers setAll above.
   const { data } = await supabase.auth.getClaims();
 
-  if (!data?.claims && request.nextUrl.pathname.startsWith("/dashboard")) {
-    const redirect = NextResponse.redirect(new URL("/login", request.url));
-    // Keep any cookie changes (e.g. cleared session) and cache headers.
-    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
-    ["cache-control", "expires", "pragma"].forEach((key) => {
-      const value = response.headers.get(key);
-      if (value) redirect.headers.set(key, value);
-    });
-    return redirect;
+  const { pathname } = request.nextUrl;
+
+  if (!data?.claims && pathname.startsWith("/dashboard")) {
+    return redirectTo("/login", request, response);
+  }
+
+  // Signed-in users have no use for the auth pages. GET only, so Server
+  // Action POSTs from these pages are never redirected.
+  if (
+    data?.claims &&
+    request.method === "GET" &&
+    (pathname === "/login" || pathname === "/signup")
+  ) {
+    return redirectTo("/dashboard", request, response);
   }
 
   return response;
+}
+
+// Redirect while keeping any cookie changes (e.g. a refreshed or cleared
+// session) and the cache headers set by Supabase.
+function redirectTo(path: string, request: NextRequest, from: NextResponse) {
+  const redirect = NextResponse.redirect(new URL(path, request.url));
+  from.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+  ["cache-control", "expires", "pragma"].forEach((key) => {
+    const value = from.headers.get(key);
+    if (value) redirect.headers.set(key, value);
+  });
+  return redirect;
 }
 
 export const config = {

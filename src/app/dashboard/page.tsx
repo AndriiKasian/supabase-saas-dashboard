@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { logout } from "@/app/auth/actions";
 import { requireUser } from "@/lib/auth";
+import { LogoutButton } from "./logout-button";
 
 export const metadata: Metadata = {
   title: "Dashboard · Supabase SaaS Dashboard",
@@ -25,9 +27,14 @@ async function DashboardContent() {
   const user = await requireUser();
 
   return (
-    <p className="text-zinc-600 dark:text-zinc-400">
-      Signed in as {user.email ?? "unknown user"}. Dashboard features are
-      coming soon.
-    </p>
+    <div className="flex flex-col items-start gap-4">
+      <p className="text-zinc-600 dark:text-zinc-400">
+        Signed in as {user.email ?? "unknown user"}. Dashboard features are
+        coming soon.
+      </p>
+      <form action={logout}>
+        <LogoutButton />
+      </form>
+    </div>
   );
 }
