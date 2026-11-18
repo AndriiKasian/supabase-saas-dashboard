@@ -14,15 +14,19 @@ import {
   type TaskFormState,
 } from "./tasks";
 
+// Matches the shadcn Input so native selects look and focus the same way.
 export const selectClassName =
-  "h-8 rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30";
+  "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:bg-input/30";
 
-type TaskFormProps =
-  | { task?: undefined; onDone?: undefined }
-  | { task: Task; onDone: () => void };
-
-// Create form when `task` is omitted, edit form otherwise.
-export function TaskForm({ task, onDone }: TaskFormProps) {
+// Create form when `task` is omitted, edit form otherwise. `onDone` runs after
+// a successful save and from the Cancel button (used to close the dialog).
+export function TaskForm({
+  task,
+  onDone,
+}: {
+  task?: Task;
+  onDone?: () => void;
+}) {
   const [state, formAction, pending] = useActionState(
     async (prev: TaskFormState, formData: FormData) => {
       const result = await (task ? updateTask : createTask)(prev, formData);
@@ -44,13 +48,13 @@ export function TaskForm({ task, onDone }: TaskFormProps) {
   });
   const fieldError = (field: TaskFields) =>
     state.fieldErrors?.[field] && (
-      <p id={`${fieldId(field)}-error`} className="text-sm text-destructive">
+      <p id={`${fieldId(field)}-error`} className="text-xs text-destructive">
         {state.fieldErrors[field]}
       </p>
     );
 
   return (
-    <form action={formAction} noValidate className="flex flex-col gap-3">
+    <form action={formAction} noValidate className="flex flex-col gap-4">
       {task && <input type="hidden" name="id" value={task.id} />}
 
       <div className="flex flex-col gap-1.5">
@@ -60,6 +64,7 @@ export function TaskForm({ task, onDone }: TaskFormProps) {
           name="title"
           required
           maxLength={200}
+          placeholder="What needs to be done?"
           defaultValue={value("title")}
           {...errorProps("title")}
         />
@@ -67,19 +72,24 @@ export function TaskForm({ task, onDone }: TaskFormProps) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={fieldId("description")}>Description</Label>
+        <Label htmlFor={fieldId("description")}>
+          Description{" "}
+          <span className="font-normal text-muted-foreground">(optional)</span>
+        </Label>
         <Textarea
           id={fieldId("description")}
           name="description"
           maxLength={2000}
+          rows={3}
+          placeholder="Add details…"
           defaultValue={value("description")}
           {...errorProps("description")}
         />
         {fieldError("description")}
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="flex flex-col gap-1.5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <Label htmlFor={fieldId("status")}>Status</Label>
           <select
             id={fieldId("status")}
@@ -97,8 +107,11 @@ export function TaskForm({ task, onDone }: TaskFormProps) {
           {fieldError("status")}
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={fieldId("due_date")}>Due date</Label>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor={fieldId("due_date")}>
+            Due date{" "}
+            <span className="font-normal text-muted-foreground">(optional)</span>
+          </Label>
           <Input
             id={fieldId("due_date")}
             name="due_date"
@@ -116,11 +129,8 @@ export function TaskForm({ task, onDone }: TaskFormProps) {
         </p>
       )}
 
-      <div className="flex gap-2">
-        <Button type="submit" disabled={pending}>
-          {pending ? "Saving…" : task ? "Save" : "Add task"}
-        </Button>
-        {task && (
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        {onDone && (
           <Button
             type="button"
             variant="outline"
@@ -130,6 +140,9 @@ export function TaskForm({ task, onDone }: TaskFormProps) {
             Cancel
           </Button>
         )}
+        <Button type="submit" disabled={pending}>
+          {pending ? "Saving…" : task ? "Save changes" : "Create task"}
+        </Button>
       </div>
     </form>
   );

@@ -1,14 +1,46 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { deleteTask, setTaskStatus } from "./actions";
-import { TaskForm, selectClassName } from "./task-form";
-import { STATUS_LABELS, TASK_STATUSES, type Task } from "./tasks";
+import { CalendarIcon, DotsIcon } from "./icons";
+import { TaskDialog } from "./task-dialog";
+import {
+  STATUS_BADGE_CLASSES,
+  STATUS_DOT_CLASSES,
+  STATUS_LABELS,
+  TASK_STATUSES,
+  formatDueDate,
+  type Task,
+  type TaskStatus,
+} from "./tasks";
 
-export function TaskItem({ task }: { task: Task }) {
-  const [editing, setEditing] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+// `today` (YYYY-MM-DD) comes from the server so server and client agree.
+export function TaskItem({ task, today }: { task: Task; today: string }) {
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Dialogs opened from the menu return focus to the menu button.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [statusState, statusAction, statusPending] = useActionState(
     setTaskStatus,
     {},
@@ -17,97 +49,148 @@ export function TaskItem({ task }: { task: Task }) {
     deleteTask,
     {},
   );
+  const [, startTransition] = useTransition();
 
-  if (editing) {
-    return (
-      <li className="rounded-lg border p-4">
-        <TaskForm task={task} onDone={() => setEditing(false)} />
-      </li>
-    );
+  function changeStatus(status: TaskStatus) {
+    if (status === task.status) return;
+    const formData = new FormData();
+    formData.set("id", task.id);
+    formData.set("status", status);
+    startTransition(() => statusAction(formData));
   }
 
-  const error = statusState.error ?? deleteState.error;
+  const done = task.status === "done";
+  const overdue = !done && task.due_date !== null && task.due_date < today;
 
   return (
-    <li className="flex flex-col gap-3 rounded-lg border p-4">
-      <div className="flex flex-col gap-1">
-        <h3
-          className={`font-medium break-words ${task.status === "done" ? "text-muted-foreground line-through" : ""}`}
-        >
-          {task.title}
-        </h3>
-        {task.description && (
-          <p className="text-sm whitespace-pre-line break-words text-muted-foreground">
-            {task.description}
-          </p>
-        )}
-        {task.due_date && (
-          <p className="text-xs text-muted-foreground">Due {task.due_date}</p>
-        )}
+    <li className="flex items-start gap-3 px-4 py-4 transition-colors hover:bg-accent/30 sm:items-center sm:gap-4 sm:px-6">
+      <span
+        aria-hidden="true"
+        className={`mt-1.5 size-3 shrink-0 rounded-full sm:mt-0 ${STATUS_DOT_CLASSES[task.status]}`}
+      />
+
+      <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-6">
+        <div className="min-w-0 flex-1">
+          <h3
+            className={`font-medium break-words ${done ? "text-muted-foreground" : ""}`}
+          >
+            {task.title}
+          </h3>
+          {task.description && (
+            <p className="mt-0.5 line-clamp-2 text-sm break-words whitespace-pre-line text-muted-foreground">
+              {task.description}
+            </p>
+          )}
+          {statusState.error && (
+            <p role="alert" className="mt-1 text-sm text-destructive">
+              {statusState.error}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 sm:mt-0 sm:shrink-0 sm:flex-nowrap">
+          {task.due_date && (
+            <span
+              className={`flex items-center gap-1.5 text-sm whitespace-nowrap tabular-nums ${overdue ? "font-medium text-destructive" : "text-muted-foreground"}`}
+            >
+              <CalendarIcon className="size-4" />
+              {overdue && "Overdue · "}
+              <time dateTime={task.due_date}>
+                {formatDueDate(task.due_date)}
+              </time>
+            </span>
+          )}
+          <span
+            className={`inline-flex min-w-24 justify-center rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap ${STATUS_BADGE_CLASSES[task.status]} ${statusPending ? "opacity-60" : ""}`}
+          >
+            {statusPending ? "Updating…" : STATUS_LABELS[task.status]}
+          </span>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <form action={statusAction}>
-          <input type="hidden" name="id" value={task.id} />
-          <select
-            name="status"
-            aria-label="Status"
-            defaultValue={task.status}
-            key={task.status}
-            disabled={statusPending}
-            onChange={(e) => e.currentTarget.form?.requestSubmit()}
-            className={selectClassName}
-          >
-            {TASK_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABELS[s]}
-              </option>
-            ))}
-          </select>
-        </form>
-
-        <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-          Edit
-        </Button>
-
-        {confirmingDelete ? (
-          <form action={deleteAction} className="flex items-center gap-2">
-            <input type="hidden" name="id" value={task.id} />
-            <span className="text-sm">Delete this task?</span>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          ref={menuButtonRef}
+          render={
             <Button
-              type="submit"
-              variant="destructive"
-              size="sm"
-              disabled={deletePending}
-            >
-              {deletePending ? "Deleting…" : "Delete"}
-            </Button>
-            <Button
-              type="button"
               variant="ghost"
-              size="sm"
-              disabled={deletePending}
-              onClick={() => setConfirmingDelete(false)}
+              size="icon-sm"
+              className="-my-1 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={`Actions for ${task.title}`}
+            />
+          }
+        >
+          <DotsIcon className="size-5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onClick={() => setEditOpen(true)}>
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Status</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={task.status}
+              onValueChange={(value) => changeStatus(value as TaskStatus)}
             >
-              Cancel
-            </Button>
-          </form>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setConfirmingDelete(true)}
+              {TASK_STATUSES.map((s) => (
+                <DropdownMenuRadioItem key={s} value={s}>
+                  {STATUS_LABELS[s]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => setDeleteOpen(true)}
           >
             Delete
-          </Button>
-        )}
-      </div>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+      <TaskDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        task={task}
+        finalFocus={menuButtonRef}
+      />
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent finalFocus={menuButtonRef}>
+          <DialogHeader>
+            <DialogTitle>Delete task?</DialogTitle>
+            <DialogDescription className="break-words">
+              &ldquo;{task.title}&rdquo; will be permanently deleted. This
+              can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteState.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {deleteState.error}
+            </p>
+          )}
+          <DialogFooter>
+            <DialogClose
+              render={<Button variant="outline" disabled={deletePending} />}
+            >
+              Cancel
+            </DialogClose>
+            <form action={deleteAction}>
+              <input type="hidden" name="id" value={task.id} />
+              <Button
+                type="submit"
+                variant="destructive"
+                className="w-full"
+                disabled={deletePending}
+              >
+                {deletePending ? "Deleting…" : "Delete task"}
+              </Button>
+            </form>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </li>
   );
 }
