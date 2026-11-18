@@ -4,7 +4,13 @@ import { refresh } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { TASK_STATUSES, type TaskFields, type TaskFormState } from "./tasks";
+import {
+  TASK_STATUSES,
+  type FilterFields,
+  type FilterFormState,
+  type TaskFields,
+  type TaskFormState,
+} from "./tasks";
 
 // Every action verifies the user first (requireUser redirects to /login
 // otherwise). user_id always comes from the verified token, never the form;
@@ -143,4 +149,58 @@ export async function deleteTask(
 
   refresh();
   return { ok: true };
+}
+
+const optionalDate = z
+  .union([z.literal(""), z.iso.date("Enter a valid date.")])
+  .transform((v) => v || null);
+
+const filtersSchema = z
+  .object({
+    status_filter: z
+      .union([z.literal(""), z.enum(TASK_STATUSES)], "Choose a valid status.")
+      .transform((v) => v || null),
+    date_from: optionalDate,
+    date_to: optionalDate,
+  })
+  .refine((f) => !f.date_from || !f.date_to || f.date_from <= f.date_to, {
+    path: ["date_to"],
+    message: "End date must be on or after the start date.",
+  });
+
+// Saves the dashboard filters as the user's preferences. The submit button
+// named "intent" with value "reset" stores the defaults instead.
+export async function saveFilters(
+  _prev: FilterFormState,
+  formData: FormData,
+): Promise<FilterFormState> {
+  const user = await requireUser();
+  const reset = formData.get("intent") === "reset";
+  const values = {
+    status_filter: reset ? "" : String(formData.get("status_filter") ?? ""),
+    date_from: reset ? "" : String(formData.get("date_from") ?? ""),
+    date_to: reset ? "" : String(formData.get("date_to") ?? ""),
+  };
+
+  const result = filtersSchema.safeParse(values);
+  if (!result.success) {
+    const fieldErrors: FilterFormState["fieldErrors"] = {};
+    for (const issue of result.error.issues) {
+      const field = issue.path[0] as FilterFields;
+      fieldErrors[field] ??= issue.message;
+    }
+    return { fieldErrors, values };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("user_preferences")
+    .upsert({ user_id: user.id, ...result.data }, { onConflict: "user_id" });
+  if (error) {
+    console.error("preferences upsert failed:", error.code);
+    return { error: DB_ERROR, values };
+  }
+
+  refresh();
+  return {};
 }

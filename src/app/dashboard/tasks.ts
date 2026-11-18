@@ -18,6 +18,20 @@ export type Task = Pick<
 
 export type TaskFields = "title" | "description" | "status" | "due_date";
 
+export type TaskFilters = {
+  status_filter: TaskStatus | null;
+  date_from: string | null;
+  date_to: string | null;
+};
+
+export type FilterFields = keyof TaskFilters;
+
+export type FilterFormState = {
+  error?: string;
+  fieldErrors?: Partial<Record<FilterFields, string>>;
+  values?: Partial<Record<FilterFields, string>>;
+};
+
 export type TaskFormState = {
   ok?: boolean;
   error?: string;

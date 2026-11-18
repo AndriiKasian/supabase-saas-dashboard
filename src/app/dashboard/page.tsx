@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./logout-button";
 import { TaskForm } from "./task-form";
 import { TaskItem } from "./task-item";
-import type { Task } from "./tasks";
+import { TaskFilters as TaskFiltersForm } from "./task-filters";
+import type { Task, TaskFilters } from "./tasks";
 
 export const metadata: Metadata = {
   title: "Dashboard · Supabase SaaS Dashboard",
@@ -30,15 +31,37 @@ export default function DashboardPage() {
 async function DashboardContent() {
   const user = await requireUser();
   const supabase = await createClient();
+
+  // Saved filters; no row yet means the defaults (all tasks).
+  const { data: prefs, error: prefsError } = await supabase
+    .from("user_preferences")
+    .select("status_filter, date_from, date_to")
+    .eq("user_id", user.id)
+    .maybeSingle()
+    .overrideTypes<TaskFilters | null, { merge: false }>();
+  const filters: TaskFilters = prefs ?? {
+    status_filter: null,
+    date_from: null,
+    date_to: null,
+  };
+
   // RLS limits rows to the owner; the user_id filter also matches the
-  // (user_id, created_at desc) index.
-  const { data: tasks, error } = await supabase
+  // indexes. gte/lte never match a NULL due_date, so tasks without one are
+  // excluded whenever a date bound is set.
+  let query = supabase
     .from("tasks")
     .select("id, title, description, status, due_date, created_at")
-    .eq("user_id", user.id)
+    .eq("user_id", user.id);
+  if (filters.status_filter) query = query.eq("status", filters.status_filter);
+  if (filters.date_from) query = query.gte("due_date", filters.date_from);
+  if (filters.date_to) query = query.lte("due_date", filters.date_to);
+  const { data: tasks, error } = await query
     .order("created_at", { ascending: false })
     // status is TEXT + CHECK in the database, so narrow it to TaskStatus.
     .overrideTypes<Task[], { merge: false }>();
+  const filtered = Boolean(
+    filters.status_filter || filters.date_from || filters.date_to,
+  );
 
   return (
     <div className="flex flex-col gap-8">
@@ -58,13 +81,24 @@ async function DashboardContent() {
 
       <section className="flex flex-col gap-3">
         <h2 className="font-medium">Your tasks</h2>
+        {prefsError && (
+          <p role="alert" className="text-sm text-destructive">
+            Couldn&apos;t load your saved filters. Showing all tasks.
+          </p>
+        )}
+        <TaskFiltersForm
+          key={`${filters.status_filter}|${filters.date_from}|${filters.date_to}`}
+          filters={filters}
+        />
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             Couldn&apos;t load your tasks. Please refresh the page.
           </p>
         ) : tasks.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No tasks yet. Add your first one above.
+            {filtered
+              ? "No tasks match your filters."
+              : "No tasks yet. Add your first one above."}
           </p>
         ) : (
           <ul className="flex flex-col gap-3">
