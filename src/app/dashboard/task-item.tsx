@@ -63,7 +63,7 @@ export function TaskItem({ task, today }: { task: Task; today: string }) {
   const overdue = !done && task.due_date !== null && task.due_date < today;
 
   return (
-    <li className="flex items-start gap-3 px-4 py-4 transition-colors hover:bg-accent/30 sm:items-center sm:gap-4 sm:px-6">
+    <li className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/30 sm:items-center sm:gap-4 sm:px-6">
       <span
         aria-hidden="true"
         className={`mt-1.5 size-3 shrink-0 rounded-full sm:mt-0 ${STATUS_DOT_CLASSES[task.status]}`}

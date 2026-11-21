@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Suspense, cache } from "react";
+import { buttonVariants } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AccountMenu } from "./account-menu";
@@ -13,10 +16,35 @@ export const metadata: Metadata = {
   title: "My Tasks · TaskFlow",
 };
 
-// Loads everything the dashboard shows. React cache shares one result per
-// request between the header, filters and list; nothing is shared between
-// requests or users.
-const loadDashboard = cache(async () => {
+const PAGE_SIZE = 10;
+// Upper bound for ?page= so offsets stay small and conversions exact.
+const MAX_PAGE = 100_000;
+
+type SearchParams = PageProps<"/dashboard">["searchParams"];
+
+// "/dashboard?page=N": missing means 1; anything that is not a plain
+// positive integer up to MAX_PAGE is invalid (null).
+function parsePage(value: string | string[] | undefined): number | null {
+  if (value === undefined) return 1;
+  if (typeof value !== "string" || !/^[1-9]\d{0,5}$/.test(value)) return null;
+  const page = Number(value);
+  return page <= MAX_PAGE ? page : null;
+}
+
+function pageHref(page: number) {
+  return page <= 1 ? "/dashboard" : `/dashboard?page=${page}`;
+}
+
+async function readPage(searchParams: SearchParams) {
+  const page = parsePage((await searchParams).page);
+  if (page === null) redirect("/dashboard");
+  return page;
+}
+
+// Loads everything the dashboard shows for one page. React cache shares one
+// result per request (keyed by page) between the header, filters and list;
+// nothing is shared between requests or users.
+const loadDashboard = cache(async (page: number) => {
   const user = await requireUser();
   const supabase = await createClient();
 
@@ -33,20 +61,47 @@ const loadDashboard = cache(async () => {
     date_to: null,
   };
 
-  // RLS limits rows to the owner; the user_id filter also matches the
-  // indexes. gte/lte never match a NULL due_date, so tasks without one are
-  // excluded whenever a date bound is set.
-  let query = supabase
-    .from("tasks")
-    .select("id, title, description, status, due_date, created_at")
-    .eq("user_id", user.id);
-  if (filters.status_filter) query = query.eq("status", filters.status_filter);
-  if (filters.date_from) query = query.gte("due_date", filters.date_from);
-  if (filters.date_to) query = query.lte("due_date", filters.date_to);
-  const { data: tasks, error: tasksError } = await query
-    .order("created_at", { ascending: false })
-    // status is TEXT + CHECK in the database, so narrow it to TaskStatus.
-    .overrideTypes<Task[], { merge: false }>();
+  // One request returns the page of rows and the exact count of all rows
+  // matching the same filters. RLS limits rows to the owner; the user_id
+  // filter also matches the indexes. gte/lte never match a NULL due_date, so
+  // tasks without one are excluded whenever a date bound is set. id breaks
+  // created_at ties so pages never overlap or skip rows.
+  const fetchRange = (from: number, to: number) => {
+    let query = supabase
+      .from("tasks")
+      .select("id, title, description, status, due_date, created_at", {
+        count: "exact",
+      })
+      .eq("user_id", user.id);
+    if (filters.status_filter) query = query.eq("status", filters.status_filter);
+    if (filters.date_from) query = query.gte("due_date", filters.date_from);
+    if (filters.date_to) query = query.lte("due_date", filters.date_to);
+    return (
+      query
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        // status is TEXT + CHECK in the database, so narrow it to TaskStatus.
+        .overrideTypes<Task[], { merge: false }>()
+    );
+  };
+
+  const from = (page - 1) * PAGE_SIZE;
+  const result = await fetchRange(from, from + PAGE_SIZE - 1);
+
+  // PGRST103: the offset is past the last row (e.g. ?page=99, or the last
+  // task on the last page was deleted). Count with a 1-row request and go
+  // to the last page that exists.
+  if (result.error?.code === "PGRST103") {
+    const probe = await fetchRange(0, 0);
+    if (!probe.error) {
+      redirect(pageHref(Math.ceil((probe.count ?? 0) / PAGE_SIZE)));
+    }
+  }
+
+  const total = result.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (!result.error && page > totalPages) redirect(pageHref(totalPages));
 
   return {
     user,
@@ -55,19 +110,27 @@ const loadDashboard = cache(async () => {
     filtered: Boolean(
       filters.status_filter || filters.date_from || filters.date_to,
     ),
-    tasks: tasksError ? null : tasks,
+    tasks: result.error ? null : result.data,
+    page,
+    total,
+    totalPages,
     // Request time is guaranteed (requireUser awaits connection()). Overdue
     // is judged against the server's UTC date.
     today: new Date().toISOString().slice(0, 10),
   };
 });
 
+async function load(searchParams: SearchParams) {
+  return loadDashboard(await readPage(searchParams));
+}
+
 // Static shell: header, headings, the New task button and fallbacks.
-// Everything user-specific streams in per request behind Suspense.
-export default function DashboardPage() {
+// Everything user-specific (and the page number) streams in per request
+// behind Suspense.
+export default function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-8">
-      <header className="flex h-16 items-center justify-between gap-4 border-b sm:h-20">
+    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-8 fit:h-dvh fit:flex-none fit:overflow-hidden">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b sm:h-16">
         <p className="flex items-center gap-2.5 text-xl font-semibold tracking-tight">
           <LayersIcon className="size-6" />
           TaskFlow
@@ -77,44 +140,46 @@ export default function DashboardPage() {
         </Suspense>
       </header>
 
-      <main className="flex flex-1 flex-col gap-8 py-8 sm:py-10">
+      <main className="flex flex-1 flex-col gap-6 py-6 sm:gap-7 sm:py-8 fit:min-h-0 fit:gap-5 fit:py-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h1 className="text-3xl font-semibold tracking-tight">My Tasks</h1>
-            <p className="text-muted-foreground">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl fit:text-2xl">
+              My Tasks
+            </h1>
+            <p className="text-sm text-muted-foreground sm:text-base fit:text-sm">
               Organize your work, stay focused.
             </p>
           </div>
           <NewTaskButton />
         </div>
 
-        <section aria-labelledby="filters-heading" className="flex flex-col gap-4">
+        <section aria-labelledby="filters-heading" className="flex flex-col gap-2.5">
           <h2
             id="filters-heading"
-            className="flex items-center gap-2.5 text-lg font-medium"
+            className="flex items-center gap-2 text-base font-medium"
           >
-            <FilterIcon className="size-5 text-muted-foreground" />
+            <FilterIcon className="size-4 text-muted-foreground" />
             Filters
           </h2>
           <Suspense fallback={<FiltersSkeleton />}>
-            <Filters />
+            <Filters searchParams={searchParams} />
           </Suspense>
         </section>
 
         <section
           aria-labelledby="tasks-heading"
-          className="overflow-hidden rounded-xl border bg-card"
+          className="overflow-hidden rounded-xl border bg-card fit:flex fit:min-h-0 fit:flex-initial fit:flex-col"
         >
-          <div className="flex items-center justify-between gap-3 border-b px-4 py-4 sm:px-6">
-            <h2 id="tasks-heading" className="text-lg font-semibold">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+            <h2 id="tasks-heading" className="text-base font-semibold">
               All tasks
             </h2>
             <Suspense fallback={null}>
-              <TaskCount />
+              <TaskCount searchParams={searchParams} />
             </Suspense>
           </div>
           <Suspense fallback={<ListSkeleton />}>
-            <TaskList />
+            <TaskList searchParams={searchParams} />
           </Suspense>
         </section>
       </main>
@@ -123,23 +188,23 @@ export default function DashboardPage() {
 }
 
 async function Account() {
-  const { user } = await loadDashboard();
+  const user = await requireUser();
   return <AccountMenu email={user.email ?? "Unknown user"} />;
 }
 
-async function TaskCount() {
-  const { tasks, filtered } = await loadDashboard();
+async function TaskCount({ searchParams }: { searchParams: SearchParams }) {
+  const { tasks, total, filtered } = await load(searchParams);
   if (!tasks) return null;
-  const noun = tasks.length === 1 ? "task" : "tasks";
+  const noun = total === 1 ? "task" : "tasks";
   return (
     <span className="text-sm text-muted-foreground tabular-nums">
-      {tasks.length} {filtered ? `matching ${noun}` : noun}
+      {total} {filtered ? `matching ${noun}` : noun}
     </span>
   );
 }
 
-async function Filters() {
-  const { filters, prefsFailed } = await loadDashboard();
+async function Filters({ searchParams }: { searchParams: SearchParams }) {
+  const { filters, prefsFailed } = await load(searchParams);
   return (
     <div className="flex flex-col gap-3">
       {prefsFailed && (
@@ -161,8 +226,9 @@ async function Filters() {
   );
 }
 
-async function TaskList() {
-  const { tasks, filtered, today } = await loadDashboard();
+async function TaskList({ searchParams }: { searchParams: SearchParams }) {
+  const { tasks, filtered, today, page, total, totalPages } =
+    await load(searchParams);
 
   if (!tasks) {
     return (
@@ -191,12 +257,77 @@ async function TaskList() {
     );
   }
 
+  const first = (page - 1) * PAGE_SIZE + 1;
+  const last = first + tasks.length - 1;
+
   return (
-    <ul className="divide-y">
-      {tasks.map((task) => (
-        <TaskItem key={task.id} task={task} today={today} />
-      ))}
-    </ul>
+    <>
+      {/* In the fit layout only this area scrolls; tabIndex lets keyboard
+          users focus it and scroll with the arrow keys. */}
+      <div
+        role="region"
+        aria-label="Task list"
+        tabIndex={0}
+        className="outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset fit:min-h-0 fit:flex-initial fit:overflow-y-auto"
+      >
+        <ul className="divide-y">
+          {tasks.map((task) => (
+            <TaskItem key={task.id} task={task} today={today} />
+          ))}
+        </ul>
+      </div>
+      {totalPages > 1 && (
+        <nav
+          aria-label="Pagination"
+          className="flex shrink-0 items-center justify-between gap-3 border-t px-4 py-2.5 sm:px-6"
+        >
+          <p className="text-sm text-muted-foreground tabular-nums">
+            <span className="hidden sm:inline">
+              Showing {first}–{last} of {total} ·{" "}
+            </span>
+            Page {page} of {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <PageLink page={page - 1} enabled={page > 1}>
+              Previous
+            </PageLink>
+            <PageLink page={page + 1} enabled={page < totalPages}>
+              Next
+            </PageLink>
+          </div>
+        </nav>
+      )}
+    </>
+  );
+}
+
+// A real link when the page exists; otherwise a non-focusable, disabled-
+// looking label so there is no dead control at the boundaries.
+function PageLink({
+  page,
+  enabled,
+  children,
+}: {
+  page: number;
+  enabled: boolean;
+  children: string;
+}) {
+  const className = buttonVariants({ variant: "outline", size: "sm" });
+  if (!enabled) {
+    return (
+      <span aria-disabled="true" className={`${className} opacity-50`}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <Link
+      href={pageHref(page)}
+      className={className}
+      aria-label={`${children} page, page ${page}`}
+    >
+      {children}
+    </Link>
   );
 }
 
@@ -207,7 +338,7 @@ function FiltersSkeleton() {
       className="grid gap-3 sm:grid-cols-3 lg:grid-cols-[1.15fr_1fr_1fr_auto]"
     >
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-[58px] rounded-lg border bg-muted/40" />
+        <div key={i} className="h-[50px] rounded-lg border bg-muted/40" />
       ))}
       <div className="h-10 rounded-lg bg-muted/40 sm:col-span-3 lg:col-span-1 lg:w-52 lg:self-center" />
     </div>

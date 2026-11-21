@@ -4,6 +4,10 @@
 
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
+/* Desktop windows tall enough to fit the dashboard in one viewport, with
+   only the task rows scrolling. Smaller screens keep natural page scroll. */
+@custom-variant fit (@media (min-width: 64rem) and (min-height: 45rem));
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

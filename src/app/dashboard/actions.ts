@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -201,6 +202,6 @@ export async function saveFilters(
     return { error: DB_ERROR, values };
   }
 
-  refresh();
-  return {};
+  // New filters change the result set, so go back to page 1.
+  redirect("/dashboard");
 }

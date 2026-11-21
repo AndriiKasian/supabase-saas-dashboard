@@ -13,7 +13,7 @@ import {
 // Bordered box with a small label above a borderless native control; the
 // focus ring is drawn on the box.
 const fieldClassName =
-  "flex min-w-0 flex-col gap-0.5 rounded-lg border border-input bg-card px-3 py-2 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 has-aria-invalid:border-destructive has-disabled:opacity-60";
+  "flex min-w-0 flex-col rounded-lg border border-input bg-card px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 has-aria-invalid:border-destructive has-disabled:opacity-60";
 const controlClassName =
   "w-full min-w-0 bg-transparent text-sm outline-none [color-scheme:light] dark:[color-scheme:dark] disabled:cursor-not-allowed";
 
@@ -119,10 +119,6 @@ export function TaskFilters({
             {state.error}
           </p>
         )}
-        <p className="text-xs text-muted-foreground">
-          Due dates are inclusive. Tasks without a due date are hidden when a
-          date is set.
-        </p>
       </fieldset>
     </form>
   );

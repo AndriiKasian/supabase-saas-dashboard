@@ -19,18 +19,24 @@ export const selectClassName =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:bg-input/30";
 
 // Create form when `task` is omitted, edit form otherwise. `onDone` runs after
-// a successful save and from the Cancel button (used to close the dialog).
+// a successful save and from the Cancel button (used to close the dialog);
+// `onSaved` runs only after a successful save.
 export function TaskForm({
   task,
   onDone,
+  onSaved,
 }: {
   task?: Task;
   onDone?: () => void;
+  onSaved?: () => void;
 }) {
   const [state, formAction, pending] = useActionState(
     async (prev: TaskFormState, formData: FormData) => {
       const result = await (task ? updateTask : createTask)(prev, formData);
-      if (result.ok) onDone?.();
+      if (result.ok) {
+        onDone?.();
+        onSaved?.();
+      }
       return result;
     },
     {},

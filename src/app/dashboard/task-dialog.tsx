@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,11 +21,13 @@ export function TaskDialog({
   onOpenChange,
   task,
   finalFocus,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   task?: Task;
   finalFocus?: RefObject<HTMLElement | null>;
+  onSaved?: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -35,7 +38,11 @@ export function TaskDialog({
             {task ? "Update the task details." : "Add a task to your list."}
           </DialogDescription>
         </DialogHeader>
-        <TaskForm task={task} onDone={() => onOpenChange(false)} />
+        <TaskForm
+          task={task}
+          onDone={() => onOpenChange(false)}
+          onSaved={onSaved}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -44,6 +51,7 @@ export function TaskDialog({
 export function NewTaskButton() {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const router = useRouter();
   return (
     <>
       <Button
@@ -55,7 +63,13 @@ export function NewTaskButton() {
         <PlusIcon className="size-4" />
         New task
       </Button>
-      <TaskDialog open={open} onOpenChange={setOpen} finalFocus={buttonRef} />
+      <TaskDialog
+        open={open}
+        onOpenChange={setOpen}
+        finalFocus={buttonRef}
+        // New tasks appear first, so show page 1 after creating one.
+        onSaved={() => router.push("/dashboard")}
+      />
     </>
   );
 }
